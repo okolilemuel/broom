@@ -68,7 +68,7 @@ brew install broom
 ### One-line install script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/okolilemuel/broom/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/okolilemuel/broom/main/install.sh | bash
 ```
 
 ### Build from source
