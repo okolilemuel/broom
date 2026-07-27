@@ -63,21 +63,24 @@ brew trust okolilemuel/tap
 brew install broom
 ```
 
+> The `brew trust` step is a Homebrew 6.x security requirement for all third-party taps. You only need to run it once.
+
 ### One-line install script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/okolilemuel/broom/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/okolilemuel/broom/master/install.sh | bash
 ```
 
 ### Build from source
 
+Requires Go 1.22+.
+
 ```bash
 git clone https://github.com/okolilemuel/broom.git
 cd broom
-make install   # builds and copies to /usr/local/bin
+make build      # builds ./broom
+make install    # copies to /usr/local/bin/broom
 ```
-
-Requires Go 1.22+.
 
 ---
 
@@ -87,7 +90,7 @@ Requires Go 1.22+.
 broom                      # interactive scan → select → delete
 broom --dry-run            # scan and preview without deleting anything
 broom --older-than 6m      # auto-select items older than 6 months
-broom --older-than 1y      # or 1 year, 90d, 180d…
+broom --older-than 1y      # supports: 6m, 1y, 90d, 180d, or any Go duration
 broom --version
 broom --help
 ```
@@ -98,10 +101,10 @@ broom --help
 |-----|--------|
 | `↑` / `↓` or `j` / `k` | Navigate list |
 | `space` | Toggle item selection |
-| `tab` | Toggle entire category |
+| `tab` | Toggle all items in current category |
 | `a` | Select all visible items |
 | `A` | Deselect all visible items |
-| `/` | Fuzzy filter |
+| `/` | Enter fuzzy filter mode |
 | `esc` | Exit filter mode |
 | `enter` | Proceed to confirm |
 | `q` | Quit |
@@ -114,75 +117,67 @@ broom --help
 
 | Type | Finds |
 |------|-------|
-| **Node modules** | `node_modules/` directories in project trees, sorted by size |
-| **Python venvs** | `.venv/`, `venv/`, `env/` — confirmed as real venvs before listing |
+| **Node modules** | `node_modules/` directories, skips nested ones |
+| **Python venvs** | `.venv/`, `venv/`, `env/` — confirmed as real venvs via `bin/python` check |
 | **Rust targets** | `target/` directories next to a `Cargo.toml` |
-| **Build output** | `.next/`, `dist/`, `build/`, `.turbo/`, `.parcel-cache/`, `out/` |
+| **Build output** | `.next/`, `dist/`, `build/`, `.turbo/`, `.parcel-cache/`, `out/`, `.output/` |
 
-All project artifacts show **last git commit date** so you know exactly how stale they are. Items with no git history are flagged as `no git`.
+All project artifacts show the **last git commit date** so you know exactly how stale they are. Items with no git history are flagged as `no git`.
 
-### Global caches
+### Package caches
 
-| Cache | Location |
-|-------|----------|
+| Cache | macOS path |
+|-------|------------|
 | npm | `~/.npm` |
 | uv | `~/.cache/uv` |
 | pnpm store | `~/Library/pnpm/store` |
 | Cargo registry | `~/.cargo/registry/src` + `~/.cargo/git` |
 | Homebrew | `~/Library/Caches/Homebrew` |
-| Puppeteer | `~/.cache/puppeteer` |
-| Playwright | `~/Library/Caches/ms-playwright` |
 | Gradle | `~/.gradle/caches` |
 | Maven | `~/.m2/repository` |
-| Solana | `~/.cache/solana` |
 
 ### LLM models
 
 | Source | What's found |
 |--------|-------------|
-| HuggingFace | Each model under `~/.cache/huggingface/hub/` listed individually |
+| HuggingFace | Each model under `~/.cache/huggingface/hub/` listed individually by name and size |
 | LM Studio | GGUF files under `~/.cache/lm-studio/models/` |
 | Ollama | `~/.ollama/models/` blob store |
+
+### App caches
+
+| Cache | Location |
+|-------|----------|
+| Puppeteer | `~/.cache/puppeteer` |
+| Playwright | `~/Library/Caches/ms-playwright` |
+| Solana | `~/.cache/solana` |
 
 ### Docker / Podman
 
 Works with both Docker Desktop and Podman (they share a backend on macOS).
 
-- Dangling images (untagged build layers)
-- Stopped containers
-- Unused volumes
-- BuildKit / buildx cache
-- Unused named images older than 30 days
+| Item | Clean action |
+|------|-------------|
+| Dangling images | `docker image prune --force` |
+| Stopped containers | `docker container prune --force` |
+| Unused volumes | `docker volume prune --force` |
+| BuildKit / buildx cache | `docker buildx prune --force` |
+| Unused named images (>30 days old) | `docker rmi <id>` per image |
 
-### Xcode (macOS)
+### Xcode (macOS only)
 
-- DerivedData
-- Build Archives
-- iOS Device Support symbols
-- Unavailable simulators (`xcrun simctl delete unavailable`)
-
----
-
-## Ignore list
-
-Create `~/.config/broom/ignore` to permanently skip paths:
-
-```
-# broom ignore file
-# one path prefix per line, ~ is expanded
-
-~/Projects/active-client
-~/Projects/company-monorepo
-~/work/do-not-touch
-```
-
-Any directory whose path starts with an entry in this file will be skipped during scanning.
+| Item | Clean action |
+|------|-------------|
+| DerivedData | `rm -rf` |
+| Build Archives | `rm -rf` |
+| iOS Device Support | `rm -rf` |
+| Unavailable simulators | `xcrun simctl delete unavailable` |
 
 ---
 
 ## Dry run
 
-Always safe to run `--dry-run` first. It scans everything, shows you exactly what it would delete, walks you through the selection flow, and prints a summary — without touching a single file.
+Always safe to run `--dry-run` first. broom scans everything, shows you what it found, walks you through the full selection flow, and prints a summary — without touching a single file.
 
 ```bash
 broom --dry-run
@@ -194,65 +189,54 @@ The UI shows a `[DRY RUN]` badge throughout and the done screen says **"Would fr
 
 ## Auto-selection
 
-The `--older-than` flag pre-selects items based on age so you don't have to manually pick through everything:
+The `--older-than` flag pre-selects items based on age so you don't have to pick through everything manually:
 
 ```bash
 broom --older-than 6m    # pre-select anything last committed >6 months ago
 broom --older-than 1y    # pre-select anything >1 year old
 ```
 
-Items with **no git history** are always auto-selected when this flag is set — they're almost always throwaway experiments or demo projects.
+Items with **no git history** are always auto-selected when this flag is set — they're almost always throwaway experiments or demo projects. You can still deselect anything before confirming.
 
-You can still deselect anything before confirming.
+---
+
+## Ignore list
+
+Create `~/.config/broom/ignore` to permanently skip paths during scanning:
+
+```
+# broom ignore file — one path prefix per line, ~ is expanded
+
+~/Projects/active-client
+~/Projects/company-monorepo
+~/work/do-not-touch
+```
 
 ---
 
 ## How it works
 
-broom scans concurrently — all scanners run in parallel goroutines and stream results into the UI in real time. You see items appear as they're found rather than waiting for a full scan to complete.
+broom runs all scanners concurrently in separate goroutines and streams results into the UI in real time — you see items appear as they're found rather than waiting for a full scan to complete.
 
-Deduplication is handled via a shared `sync.Map` keyed on the real filesystem path (`filepath.EvalSymlinks`), so even if you have symlinks or multiple search roots that overlap, the same directory is never listed twice.
+Deduplication uses a shared `sync.Map` keyed on the resolved filesystem path (`filepath.EvalSymlinks`), so symlinks and overlapping search roots never produce duplicate entries.
 
-Deletion respects each item's `CleanFunc` — Docker items run `docker system prune`, Xcode simulators run `xcrun simctl delete unavailable`, everything else is a standard `os.RemoveAll`. The `--dry-run` flag skips all of these.
-
----
-
-## Building from source
-
-```bash
-git clone https://github.com/okolilemuel/broom.git
-cd broom
-
-make build      # ./broom
-make install    # /usr/local/bin/broom
-make release    # all 4 platform binaries
-make clean
-```
-
-Cross-compilation targets:
-
-| Binary | Platform |
-|--------|----------|
-| `broom-darwin-arm64` | macOS Apple Silicon |
-| `broom-darwin-amd64` | macOS Intel |
-| `broom-linux-arm64` | Linux ARM64 |
-| `broom-linux-amd64` | Linux x86-64 |
+Each item carries its own `CleanFunc` — Docker items run targeted prune commands, Xcode simulators run `xcrun simctl delete unavailable`, everything else is `os.RemoveAll`. The `--dry-run` flag skips all clean functions without changing anything else about the flow.
 
 ---
 
 ## Releasing
 
-Tag a version and the GitHub Actions workflow handles the rest:
+Tag a version and the CI handles everything:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 The workflow:
-1. Builds all 4 platform binaries
+1. Builds all 4 platform binaries (darwin/linux × arm64/amd64)
 2. Creates a GitHub Release with binaries attached
-3. Computes SHA256 checksums and automatically updates the Homebrew tap formula
+3. Downloads the binaries, computes SHA256 checksums, and commits an updated formula to the [homebrew-tap](https://github.com/okolilemuel/homebrew-tap) repo automatically
 
 `brew upgrade broom` picks it up for all users within minutes.
 
@@ -274,12 +258,11 @@ The workflow:
 
 Pull requests are welcome. A few areas where contributions would be especially useful:
 
-- **Linux-specific paths** — Linux has different cache locations for tools like pnpm, Gradle, pip. If you use Linux and know the right paths, open a PR adding them to `internal/platform/linux.go`.
-- **Windows support** — `internal/platform/windows.go` doesn't exist yet. The platform interface is designed to make this straightforward.
-- **New scanners** — Maven, Pip download cache, Android SDK, Go module cache, Terraform providers, etc. Each scanner is a small self-contained file in `internal/scan/`.
-- **Homebrew tap automation** — The formula auto-update workflow is a single shell script in `release.yml`. Improvements welcome.
+- **Linux paths** — Linux has different cache locations for pnpm, pip, etc. Add them to `internal/platform/linux.go`.
+- **Windows support** — `internal/platform/windows.go` doesn't exist yet. The `Platform` interface makes it straightforward to add.
+- **New scanners** — Go module cache, Android SDK, Terraform providers, pip download cache, etc. Each scanner is a small self-contained file in `internal/scan/`.
 
-To add a new scanner, implement the `scan.Scanner` interface:
+To add a new scanner, implement the `scan.Scanner` interface and register it in `internal/ui/model.go`'s `startScanning()`:
 
 ```go
 type Scanner interface {
@@ -287,8 +270,6 @@ type Scanner interface {
     Scan(ctx context.Context, roots []platform.Root, sc ScanContext, out chan<- Item)
 }
 ```
-
-Then register it in `internal/ui/model.go`'s `startScanning()`.
 
 ---
 
