@@ -76,3 +76,91 @@ jobs:
             broom-linux-amd64
             broom-linux-arm64
           generate_release_notes: true
+
+  update-tap:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute SHA256 checksums and update formula
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          BASE="https://github.com/okolilemuel/broom/releases/download/${VERSION}"
+          VER="${VERSION#v}"
+
+          echo "Downloading binaries to compute checksums..."
+          SHA_DARWIN_ARM64=$(curl -fsSL "${BASE}/broom-darwin-arm64" | sha256sum | cut -d' ' -f1)
+          SHA_DARWIN_AMD64=$(curl -fsSL "${BASE}/broom-darwin-amd64" | sha256sum | cut -d' ' -f1)
+          SHA_LINUX_ARM64=$(curl -fsSL "${BASE}/broom-linux-arm64"  | sha256sum | cut -d' ' -f1)
+          SHA_LINUX_AMD64=$(curl -fsSL "${BASE}/broom-linux-amd64"  | sha256sum | cut -d' ' -f1)
+
+          echo "darwin/arm64: ${SHA_DARWIN_ARM64}"
+          echo "darwin/amd64: ${SHA_DARWIN_AMD64}"
+          echo "linux/arm64:  ${SHA_LINUX_ARM64}"
+          echo "linux/amd64:  ${SHA_LINUX_AMD64}"
+
+          # Write updated formula
+          cat > broom.rb << FORMULA
+          class Broom < Formula
+            desc "Sweep your dev machine clean — guided TUI for reclaiming disk space"
+            homepage "https://github.com/okolilemuel/broom"
+            version "${VER}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "${BASE}/broom-darwin-arm64"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "${BASE}/broom-darwin-amd64"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${BASE}/broom-linux-arm64"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "${BASE}/broom-linux-amd64"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install stable.url.split("/").last => "broom"
+            end
+
+            test do
+              assert_match "broom ${VER}", shell_output("#{bin}/broom --version")
+            end
+          end
+          FORMULA
+
+          # Get current file SHA (required by GitHub API for updates)
+          FILE_SHA=$(curl -fsSL \
+            -H "Authorization: token ${TAP_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/okolilemuel/homebrew-tap/contents/Formula/broom.rb" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")
+
+          # Base64-encode the formula (no line wrapping)
+          CONTENT=$(base64 -w0 broom.rb)
+
+          # Commit updated formula to tap repo via GitHub API
+          curl -fsSL -X PUT \
+            -H "Authorization: token ${TAP_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/okolilemuel/homebrew-tap/contents/Formula/broom.rb" \
+            -d "{
+              \"message\": \"chore: update broom formula to ${VERSION}\",
+              \"content\": \"${CONTENT}\",
+              \"sha\": \"${FILE_SHA}\"
+            }"
+
+          echo "Homebrew tap updated to ${VERSION}"
