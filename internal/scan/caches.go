@@ -15,7 +15,7 @@ type CacheScanner struct {
 
 func (s *CacheScanner) Name() string { return "caches" }
 
-func (s *CacheScanner) Scan(ctx context.Context, roots []platform.Root, out chan<- Item) {
+func (s *CacheScanner) Scan(ctx context.Context, roots []platform.Root, sc ScanContext, out chan<- Item) {
 	for _, c := range s.Caches {
 		select {
 		case <-ctx.Done():
@@ -25,6 +25,13 @@ func (s *CacheScanner) Scan(ctx context.Context, roots []platform.Root, out chan
 		if !PathExists(c.Path) {
 			continue
 		}
+
+		// global deduplication via real path
+		key := DedupeKey(c.Path)
+		if _, loaded := sc.Seen.LoadOrStore(key, true); loaded {
+			continue
+		}
+
 		size := DirSizeBytes(c.Path)
 		if size < minCacheSize {
 			continue

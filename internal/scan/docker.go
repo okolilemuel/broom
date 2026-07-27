@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"broom/internal/platform"
 )
@@ -13,7 +14,7 @@ type DockerScanner struct{}
 
 func (s *DockerScanner) Name() string { return "docker/podman" }
 
-func (s *DockerScanner) Scan(ctx context.Context, roots []platform.Root, out chan<- Item) {
+func (s *DockerScanner) Scan(ctx context.Context, roots []platform.Root, sc ScanContext, out chan<- Item) {
 	for _, cli := range []string{"docker", "podman"} {
 		if !cliExists(cli) {
 			continue
@@ -77,8 +78,118 @@ func (s *DockerScanner) Scan(ctx context.Context, roots []platform.Root, out cha
 			}
 		}
 
+		// unused named images older than 30 days
+		unusedImages := findUnusedNamedImages(cli)
+		for _, img := range unusedImages {
+			img := img // capture
+			out <- Item{
+				Path:        cli + ":image:" + img.id,
+				DisplayName: cli + " image " + img.name,
+				Category:    CategoryDocker,
+				SizeBytes:   img.size,
+				HasGit:      false,
+				Description: "unused named image (>30d old)",
+				CleanFunc: func() error {
+					return exec.Command(cli, "rmi", img.id).Run()
+				},
+			}
+		}
+
 		break // docker and podman share a backend; scan once
 	}
+}
+
+type dockerImage struct {
+	id   string
+	name string
+	size int64
+}
+
+// findUnusedNamedImages returns named images not referenced by any container
+// that are older than 30 days.
+func findUnusedNamedImages(cli string) []dockerImage {
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+
+	// collect images in use by containers
+	psOut, err := exec.Command(cli, "ps", "-a", "--format", "{{.Image}}").Output()
+	inUse := map[string]bool{}
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(psOut)), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				inUse[line] = true
+			}
+		}
+	}
+
+	// list all named images
+	imgOut, err := exec.Command(cli, "images",
+		"--format", "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}|{{.CreatedAt}}").Output()
+	if err != nil {
+		return nil
+	}
+
+	var results []dockerImage
+	seenIDs := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(imgOut)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 5)
+		if len(parts) < 5 {
+			continue
+		}
+		id, repo, tag, sizeStr, createdAt := parts[0], parts[1], parts[2], parts[3], parts[4]
+
+		// skip dangling images (already handled by prune)
+		if repo == "<none>" || tag == "<none>" {
+			continue
+		}
+
+		// deduplicate by image ID
+		shortID := id
+		if len(id) > 12 {
+			shortID = id[:12]
+		}
+		if seenIDs[shortID] {
+			continue
+		}
+		seenIDs[shortID] = true
+
+		// parse creation time — docker uses "2006-01-02 15:04:05 -0700 MST" or similar
+		created, err := parseDockerTime(createdAt)
+		if err != nil || created.After(cutoff) {
+			continue
+		}
+
+		name := repo + ":" + tag
+		if inUse[name] || inUse[repo] || inUse[id] || inUse[shortID] {
+			continue
+		}
+
+		size := parseDockerSize(sizeStr)
+		results = append(results, dockerImage{id: shortID, name: name, size: size})
+	}
+	return results
+}
+
+// parseDockerTime parses the CreatedAt field from `docker images`.
+func parseDockerTime(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	// try several formats docker may emit
+	formats := []string{
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05 -0700",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05.000000000Z",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, &time.ParseError{}
 }
 
 // systemDF runs `docker system df` and returns reclaimable bytes per type.

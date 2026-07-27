@@ -4,12 +4,14 @@ import (
 	"context"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dustin/go-humanize"
 
 	"broom/internal/clean"
+	"broom/internal/config"
 	"broom/internal/platform"
 	"broom/internal/scan"
 )
@@ -54,11 +56,12 @@ type listRow struct {
 // ---- Main model ----
 
 type Model struct {
-	state  appState
-	plat   platform.Platform
-	dryRun bool
-	width  int
-	height int
+	state     appState
+	plat      platform.Platform
+	dryRun    bool
+	olderThan time.Duration // 0 means disabled
+	width     int
+	height    int
 
 	// scanning
 	spinner      spinner.Model
@@ -67,7 +70,7 @@ type Model struct {
 	scanFinished bool
 
 	// scanning channels (kept for polling)
-	itemCh    <-chan scan.Item
+	itemCh     <-chan scan.Item
 	progressCh <-chan scan.Progress
 
 	// select screen
@@ -92,7 +95,7 @@ type Model struct {
 	finalFree   int64
 }
 
-func New(dryRun bool) Model {
+func New(dryRun bool, olderThan time.Duration) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = stylePrimary
@@ -104,6 +107,7 @@ func New(dryRun bool) Model {
 		state:        stateWelcome,
 		plat:         plat,
 		dryRun:       dryRun,
+		olderThan:    olderThan,
 		spinner:      s,
 		scanProgress: map[string]scan.Progress{},
 		initialFree:  free,
@@ -158,6 +162,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.allItems) == 0 {
 			m.state = stateDone
 			return m, nil
+		}
+		// auto-select items if --older-than was specified
+		if m.olderThan > 0 {
+			m.autoSelect()
 		}
 		m.state = stateSelect
 		return m, nil
@@ -252,6 +260,31 @@ func (m Model) handleSelectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, r := range visItems {
 			m.allItems[r.itemIdx].Selected = false
 		}
+	case "tab":
+		// Toggle all items in the current cursor's category
+		if m.cursor < len(visItems) {
+			curIdx := visItems[m.cursor].itemIdx
+			curCat := m.allItems[curIdx].Category
+			// Collect indices for this category in visItems
+			var catIndices []int
+			for _, r := range visItems {
+				if m.allItems[r.itemIdx].Category == curCat {
+					catIndices = append(catIndices, r.itemIdx)
+				}
+			}
+			// Check if all are selected
+			allSelected := true
+			for _, idx := range catIndices {
+				if !m.allItems[idx].Selected {
+					allSelected = false
+					break
+				}
+			}
+			// If all selected → deselect all; otherwise → select all
+			for _, idx := range catIndices {
+				m.allItems[idx].Selected = !allSelected
+			}
+		}
 	case "/":
 		m.filterMode = true
 	case "enter":
@@ -290,6 +323,7 @@ func (m Model) startScanning() (Model, tea.Cmd) {
 	m.state = stateScanning
 	roots := m.plat.SearchRoots()
 	caches := m.plat.GlobalCaches()
+	ignores := config.LoadIgnores()
 
 	scanners := []scan.Scanner{
 		&scan.DockerScanner{},
@@ -299,10 +333,11 @@ func (m Model) startScanning() (Model, tea.Cmd) {
 		&scan.PythonScanner{},
 		&scan.RustScanner{},
 		&scan.BuildScanner{},
+		&scan.XcodeScanner{},
 	}
 
 	ctx := context.Background()
-	itemCh, progressCh := scan.Run(ctx, scanners, roots, caches)
+	itemCh, progressCh := scan.Run(ctx, scanners, roots, caches, ignores)
 	m.itemCh = itemCh
 	m.progressCh = progressCh
 
@@ -326,6 +361,21 @@ func pollItems(items <-chan scan.Item, progress <-chan scan.Progress) tea.Cmd {
 				return scanDoneMsg{}
 			}
 			return progressMsg(p)
+		}
+	}
+}
+
+// autoSelect selects items based on the --older-than duration:
+// items with HasGit && time.Since(LastCommit) > olderThan, or items without git.
+func (m *Model) autoSelect() {
+	for i := range m.allItems {
+		item := &m.allItems[i]
+		if item.HasGit {
+			if !item.LastCommit.IsZero() && time.Since(item.LastCommit) > m.olderThan {
+				item.Selected = true
+			}
+		} else {
+			item.Selected = true
 		}
 	}
 }

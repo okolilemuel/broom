@@ -23,9 +23,21 @@ var skipAtRoot = map[string]bool{
 	".gradle": true, ".m2": true, "go": true,
 }
 
+// DedupeKey returns the canonical real path for deduplication.
+// It calls filepath.EvalSymlinks to resolve symlinks; falls back to the
+// original path if that fails (e.g., the path doesn't exist yet).
+func DedupeKey(path string) string {
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return real
+}
+
 // WalkDirs walks root looking for directories named target, up to maxDepth.
 // It calls fn for each match and does not recurse into the matched dir.
-func WalkDirs(ctx context.Context, root, target string, maxDepth int, fn func(path string)) {
+// Paths whose cleaned form has a prefix listed in ignores are skipped.
+func WalkDirs(ctx context.Context, root, target string, maxDepth int, ignores []string, fn func(path string)) {
 	var walk func(dir string, depth int)
 	walk = func(dir string, depth int) {
 		if depth > maxDepth {
@@ -48,6 +60,11 @@ func WalkDirs(ctx context.Context, root, target string, maxDepth int, fn func(pa
 			name := e.Name()
 			path := filepath.Join(dir, name)
 
+			// check ignore list
+			if isIgnored(path, ignores) {
+				continue
+			}
+
 			if name == target {
 				fn(path)
 				continue // don't recurse into the found dir
@@ -64,6 +81,17 @@ func WalkDirs(ctx context.Context, root, target string, maxDepth int, fn func(pa
 		}
 	}
 	walk(root, 0)
+}
+
+// isIgnored returns true if path has any of the ignore prefixes.
+func isIgnored(path string, ignores []string) bool {
+	clean := filepath.Clean(path)
+	for _, prefix := range ignores {
+		if clean == prefix || strings.HasPrefix(clean, prefix+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // DirSizeBytes returns the size of a directory in bytes using `du`.

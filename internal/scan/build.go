@@ -16,21 +16,22 @@ type BuildScanner struct{}
 
 func (s *BuildScanner) Name() string { return "build output" }
 
-func (s *BuildScanner) Scan(ctx context.Context, roots []platform.Root, out chan<- Item) {
+func (s *BuildScanner) Scan(ctx context.Context, roots []platform.Root, sc ScanContext, out chan<- Item) {
 	home := homeDir()
-	seen := map[string]bool{}
 
 	for _, root := range roots {
 		for _, target := range buildTargets {
-			WalkDirs(ctx, root.Path, target, root.MaxDepth, func(path string) {
-				if seen[path] {
-					return
-				}
+			WalkDirs(ctx, root.Path, target, root.MaxDepth, sc.Ignores, func(path string) {
 				// skip build dirs inside node_modules
 				if NestedCount(path, "node_modules") > 0 {
 					return
 				}
-				seen[path] = true
+
+				// global deduplication via real path
+				key := DedupeKey(path)
+				if _, loaded := sc.Seen.LoadOrStore(key, true); loaded {
+					return
+				}
 
 				size := DirSizeBytes(path)
 				if size < minBuildSize {

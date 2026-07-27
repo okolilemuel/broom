@@ -15,7 +15,7 @@ type LLMScanner struct{}
 
 func (s *LLMScanner) Name() string { return "llm models" }
 
-func (s *LLMScanner) Scan(ctx context.Context, roots []platform.Root, out chan<- Item) {
+func (s *LLMScanner) Scan(ctx context.Context, roots []platform.Root, sc ScanContext, out chan<- Item) {
 	home := homeDir()
 
 	// HuggingFace hub: scan each model separately
@@ -32,6 +32,12 @@ func (s *LLMScanner) Scan(ctx context.Context, roots []platform.Root, out chan<-
 					continue
 				}
 				path := filepath.Join(hfHub, name)
+
+				key := DedupeKey(path)
+				if _, loaded := sc.Seen.LoadOrStore(key, true); loaded {
+					continue
+				}
+
 				size := DirSizeBytes(path)
 				if size < minModelSize {
 					continue
@@ -53,26 +59,29 @@ func (s *LLMScanner) Scan(ctx context.Context, roots []platform.Root, out chan<-
 
 	// LM Studio: scan each model file
 	lmStudio := filepath.Join(home, ".cache", "lm-studio", "models")
-	scanGGUFModels(lmStudio, "LM Studio", out)
+	scanGGUFModels(lmStudio, "LM Studio", sc, out)
 
 	// Ollama blobs
 	ollamaModels := filepath.Join(home, ".ollama", "models")
 	if PathExists(ollamaModels) {
-		size := DirSizeBytes(ollamaModels)
-		if size >= minModelSize {
-			out <- Item{
-				Path:        ollamaModels,
-				DisplayName: "Ollama models",
-				Category:    CategoryLLMModel,
-				SizeBytes:   size,
-				HasGit:      false,
-				Description: "Ollama model blobs",
+		key := DedupeKey(ollamaModels)
+		if _, loaded := sc.Seen.LoadOrStore(key, true); !loaded {
+			size := DirSizeBytes(ollamaModels)
+			if size >= minModelSize {
+				out <- Item{
+					Path:        ollamaModels,
+					DisplayName: "Ollama models",
+					Category:    CategoryLLMModel,
+					SizeBytes:   size,
+					HasGit:      false,
+					Description: "Ollama model blobs",
+				}
 			}
 		}
 	}
 }
 
-func scanGGUFModels(root, source string, out chan<- Item) {
+func scanGGUFModels(root, source string, sc ScanContext, out chan<- Item) {
 	if !PathExists(root) {
 		return
 	}
@@ -93,6 +102,10 @@ func scanGGUFModels(root, source string, out chan<- Item) {
 				continue
 			}
 			if strings.HasSuffix(strings.ToLower(e.Name()), ".gguf") {
+				key := DedupeKey(path)
+				if _, loaded := sc.Seen.LoadOrStore(key, true); loaded {
+					continue
+				}
 				size := DirSizeBytes(path)
 				if size < minModelSize {
 					continue

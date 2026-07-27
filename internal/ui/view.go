@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -42,7 +43,11 @@ func (m Model) welcomeView() string {
 	if m.dryRun {
 		dryTag = "  " + styleWarning.Render("[DRY RUN — nothing will be deleted]")
 	}
-	sub := styleMuted.Render(tagline) + dryTag
+	olderTag := ""
+	if m.olderThan > 0 {
+		olderTag = "  " + styleWarning.Render(fmt.Sprintf("[auto-select items older than %s]", formatDuration(m.olderThan)))
+	}
+	sub := styleMuted.Render(tagline) + dryTag + olderTag
 
 	categories := []string{
 		"  • node_modules & Python venvs",
@@ -70,6 +75,19 @@ func (m Model) welcomeView() string {
 	return lipgloss.Place(w, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
+// formatDuration formats a duration in a human-readable way.
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	switch {
+	case days >= 365:
+		return fmt.Sprintf("%dy", days/365)
+	case days >= 30:
+		return fmt.Sprintf("%dmo", days/30)
+	default:
+		return fmt.Sprintf("%dd", days)
+	}
+}
+
 // ---- Scanning ----
 
 func (m Model) scanningView() string {
@@ -78,7 +96,7 @@ func (m Model) scanningView() string {
 
 	scannerNames := []string{
 		"docker/podman", "llm models", "caches",
-		"node_modules", "python venvs", "rust artifacts", "build output",
+		"node_modules", "python venvs", "rust artifacts", "build output", "xcode simulators",
 	}
 	for _, name := range scannerNames {
 		p, done := m.scanProgress[name], false
@@ -87,10 +105,10 @@ func (m Model) scanningView() string {
 			p = prog
 		}
 		if done {
-			sb.WriteString(styleSuccess.Render("✓ ") + fmt.Sprintf("%-20s", name) +
+			sb.WriteString(styleSuccess.Render("✓ ") + fmt.Sprintf("%-22s", name) +
 				styleMuted.Render(fmt.Sprintf("found %d", p.Found)) + "\n")
 		} else {
-			sb.WriteString(m.spinner.View() + " " + fmt.Sprintf("%-20s", name) +
+			sb.WriteString(m.spinner.View() + " " + fmt.Sprintf("%-22s", name) +
 				styleMuted.Render("scanning…") + "\n")
 		}
 	}
@@ -152,7 +170,8 @@ func (m Model) selectView() string {
 				skipped++
 				continue
 			}
-			sb.WriteString(styleCategoryHeader.Render(string(row.header)) + "\n")
+			icon := categoryIcon(row.header)
+			sb.WriteString(styleCategoryHeader.Render(icon+string(row.header)) + "\n")
 			rendered++
 
 		case rowItem:
@@ -200,7 +219,7 @@ func (m Model) selectView() string {
 	sb.WriteString("\n")
 
 	// help
-	help := "↑↓/jk navigate  space toggle  a all  A none  / filter  enter proceed  q quit"
+	help := "↑↓/jk navigate  space toggle  tab toggle category  a all  A none  / filter  enter proceed  q quit"
 	sb.WriteString(styleHelp.Render(help))
 
 	return sb.String()
@@ -323,21 +342,21 @@ func truncate(s string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
-// categoryIcon returns an emoji for a category.
+// categoryIcon returns an icon prefix for a category header.
 func categoryIcon(cat scan.Category) string {
 	icons := map[scan.Category]string{
-		scan.CategoryDocker:       "🐳",
-		scan.CategoryLLMModel:     "🤖",
-		scan.CategoryPackageCache: "📦",
-		scan.CategoryNodeModules:  "⬡",
-		scan.CategoryPythonVenv:   "🐍",
-		scan.CategoryRustArtifact: "🦀",
-		scan.CategoryBuildOutput:  "🏗",
-		scan.CategoryXcode:        "🍎",
-		scan.CategoryAppCache:     "🗑",
+		scan.CategoryDocker:       "🐳 ",
+		scan.CategoryLLMModel:     "🤖 ",
+		scan.CategoryPackageCache: "📦 ",
+		scan.CategoryNodeModules:  "⬡  ",
+		scan.CategoryPythonVenv:   "🐍 ",
+		scan.CategoryRustArtifact: "🦀 ",
+		scan.CategoryBuildOutput:  "🏗  ",
+		scan.CategoryXcode:        "🍎 ",
+		scan.CategoryAppCache:     "🗑  ",
 	}
 	if icon, ok := icons[cat]; ok {
-		return icon + " "
+		return icon
 	}
 	return ""
 }

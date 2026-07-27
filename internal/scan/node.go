@@ -13,20 +13,21 @@ type NodeScanner struct{}
 
 func (s *NodeScanner) Name() string { return "node_modules" }
 
-func (s *NodeScanner) Scan(ctx context.Context, roots []platform.Root, out chan<- Item) {
+func (s *NodeScanner) Scan(ctx context.Context, roots []platform.Root, sc ScanContext, out chan<- Item) {
 	home := homeDir()
-	seen := map[string]bool{}
 
 	for _, root := range roots {
-		WalkDirs(ctx, root.Path, "node_modules", root.MaxDepth, func(path string) {
-			if seen[path] {
-				return
-			}
+		WalkDirs(ctx, root.Path, "node_modules", root.MaxDepth, sc.Ignores, func(path string) {
 			// skip nested node_modules inside node_modules
 			if NestedCount(path, "node_modules") > 1 {
 				return
 			}
-			seen[path] = true
+
+			// global deduplication via real path
+			key := DedupeKey(path)
+			if _, loaded := sc.Seen.LoadOrStore(key, true); loaded {
+				return
+			}
 
 			size := DirSizeBytes(path)
 			if size < minNodeSize {

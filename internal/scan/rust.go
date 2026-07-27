@@ -13,22 +13,23 @@ type RustScanner struct{}
 
 func (s *RustScanner) Name() string { return "rust artifacts" }
 
-func (s *RustScanner) Scan(ctx context.Context, roots []platform.Root, out chan<- Item) {
+func (s *RustScanner) Scan(ctx context.Context, roots []platform.Root, sc ScanContext, out chan<- Item) {
 	home := homeDir()
-	seen := map[string]bool{}
 
 	for _, root := range roots {
-		WalkDirs(ctx, root.Path, "target", root.MaxDepth, func(path string) {
-			if seen[path] {
-				return
-			}
+		WalkDirs(ctx, root.Path, "target", root.MaxDepth, sc.Ignores, func(path string) {
 			parentDir := filepath.Dir(path)
 			// confirm it's a Rust project by checking for Cargo.toml nearby
 			if !PathExists(filepath.Join(parentDir, "Cargo.toml")) &&
 				!PathExists(filepath.Join(filepath.Dir(parentDir), "Cargo.toml")) {
 				return
 			}
-			seen[path] = true
+
+			// global deduplication via real path
+			key := DedupeKey(path)
+			if _, loaded := sc.Seen.LoadOrStore(key, true); loaded {
+				return
+			}
 
 			size := DirSizeBytes(path)
 			if size < minRustTargetSize {

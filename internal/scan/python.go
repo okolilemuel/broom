@@ -13,24 +13,25 @@ type PythonScanner struct{}
 
 func (s *PythonScanner) Name() string { return "python venvs" }
 
-func (s *PythonScanner) Scan(ctx context.Context, roots []platform.Root, out chan<- Item) {
+func (s *PythonScanner) Scan(ctx context.Context, roots []platform.Root, sc ScanContext, out chan<- Item) {
 	home := homeDir()
-	seen := map[string]bool{}
 	targets := []string{".venv", "venv", "env"}
 
 	for _, root := range roots {
 		for _, target := range targets {
-			WalkDirs(ctx, root.Path, target, root.MaxDepth, func(path string) {
-				if seen[path] {
-					return
-				}
+			WalkDirs(ctx, root.Path, target, root.MaxDepth, sc.Ignores, func(path string) {
 				// make sure it's actually a Python venv
 				if !PathExists(filepath.Join(path, "bin", "python")) &&
 					!PathExists(filepath.Join(path, "bin", "python3")) &&
 					!PathExists(filepath.Join(path, "Scripts", "python.exe")) {
 					return
 				}
-				seen[path] = true
+
+				// global deduplication via real path
+				key := DedupeKey(path)
+				if _, loaded := sc.Seen.LoadOrStore(key, true); loaded {
+					return
+				}
 
 				size := DirSizeBytes(path)
 				if size < minVenvSize {
