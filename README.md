@@ -30,20 +30,20 @@ A guided terminal UI for reclaiming disk space eaten by the side effects of bein
 
 ## The story
 
-One morning I opened my Mac and saw this:
+One morning I opened my Mac and it was almost full. Less than 100 GB free on a 926 GB drive. I ran CleanMyMac — the usual move — and it clawed back maybe 50 GB. Still not enough. Still sitting at 83% full with 711 GB used.
 
 ```
 Filesystem    Size    Used   Avail  Capacity
 /dev/disk3s5  926Gi  711Gi  150Gi     83%
 ```
 
-**711 GB used. 150 GB free. On a 926 GB drive.**
+**That 150 GB free? That was already after CleanMyMac had done its thing.**
 
-I'd been building things for months — a Solana project, a few AI agents, some fintech APIs — the usual. Docker containers, Python venvs, `node_modules` across dozens of projects, LLM models I downloaded once and forgot about. The machine was fine. I just never cleaned up after myself.
+CleanMyMac is good at what it does — app caches, mail downloads, language files. But it doesn't know anything about your dev environment. It doesn't know about the `buildx_buildkit_default_state` Docker volume sitting at 19 GB. It doesn't know about the 15 GB of HuggingFace models you downloaded for an experiment six months ago. It doesn't know about `node_modules` in projects you last touched in 2022, or Python venvs from abandoned side projects, or Rust `target/` directories from a Solana validator you haven't run in months.
 
-So I did it manually. Ran `du -sh` on everything. Found 44 GB of Docker build cache I didn't need. Found 19 GB in a single `buildx_buildkit_default_state` volume. Found 15 GB of HuggingFace models from experiments I'd long abandoned — Bark TTS, MusicGen, NLLB translation. Found `node_modules` in projects last touched in 2022. Python venvs from 2024. Rust `target/` directories from a Solana validator I hadn't run in months.
+So I went in manually. Ran `du -sh` on everything. Found 44 GB of Docker build cache. Found Bark TTS, MusicGen, NLLB translation — LLM models I'd long forgotten about. Found `node_modules` across dozens of dead projects. Python venvs from 2024. The whole archaeology.
 
-By the end I'd freed **270 GB**. In one session.
+By the end I'd freed **270 GB**. In one session. Things CleanMyMac couldn't touch because it didn't know to look for them.
 
 The whole time I kept thinking: *this should be a tool.* Not a script that blindly deletes things, but something guided — something that shows you what it found, how big it is, how old it is, and lets you decide. Something that runs in under a minute and asks the right questions.
 
