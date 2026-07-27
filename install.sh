@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # broom install script
-# Usage: curl -fsSL https://raw.githubusercontent.com/YOUR_USER/broom/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/okolilemuel/broom/main/install.sh | bash
 
-REPO="YOUR_USER/broom"
+REPO="okolilemuel/broom"
 BINARY="broom"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
